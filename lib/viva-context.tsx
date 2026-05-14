@@ -101,43 +101,66 @@ export function VivaProvider({ children }: { children: React.ReactNode }) {
 
   const getSessionSummary = useCallback(() => {
     if (!session) {
-      return {
-        strengths: [],
-        weakAreas: [],
-        overallScore: 0,
-        suggestions: [],
-      };
+      return { strengths: [], weakAreas: [], overallScore: 0, suggestions: [] };
     }
 
     const scores = session.scores;
     const messages = session.messages;
 
-    // Calculate overall score
-    const overallScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    const overallScore =
+      scores.length > 0
+        ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+        : 0;
 
-    // Extract strengths and weak areas from evaluations
     const strengths: string[] = [];
     const weakAreas: string[] = [];
     const suggestions: string[] = [];
 
-    messages.forEach(msg => {
-      if (msg.evaluation) {
-        if (msg.evaluation.correctness >= 7) {
-          if (msg.content.length > 20) {
-            strengths.push(`Strong understanding in: ${msg.content.substring(0, 50)}...`);
-          }
-        } else if (msg.evaluation.correctness < 5) {
-          weakAreas.push(`Weak area: ${msg.evaluation.missingConcepts.join(', ')}`);
-          suggestions.push(`Review: ${msg.evaluation.missingConcepts[0]}`);
+    // Walk through messages: assistant messages carry the evaluation of the previous user answer
+    messages.forEach((msg, idx) => {
+      if (msg.role !== 'assistant' || !msg.evaluation) return;
+
+      const { correctness, clarity, missingConcepts } = msg.evaluation;
+
+      // The question asked by the PREVIOUS assistant message (what was being tested)
+      const prevAssistant = messages
+        .slice(0, idx)
+        .reverse()
+        .find((m) => m.role === 'assistant');
+      const questionTopic = prevAssistant?.content
+        ? prevAssistant.content.substring(0, 60).replace(/\?$/, '').trim()
+        : 'this topic';
+
+      if (correctness >= 7) {
+        strengths.push(
+          clarity && clarity.length > 10
+            ? clarity
+            : `Good understanding of: "${questionTopic}..."`
+        );
+      } else if (correctness <= 4) {
+        if (missingConcepts && missingConcepts.length > 0) {
+          weakAreas.push(`Needs improvement: ${missingConcepts.slice(0, 2).join(', ')}`);
+          suggestions.push(`Review: ${missingConcepts[0]}`);
+        } else {
+          weakAreas.push(
+            clarity && clarity.length > 10
+              ? clarity
+              : `Weak area: "${questionTopic}..."`
+          );
+        }
+      } else {
+        // Mid-range (5-6) — add as suggestion
+        if (missingConcepts && missingConcepts.length > 0) {
+          suggestions.push(`Strengthen: ${missingConcepts[0]}`);
         }
       }
     });
 
     return {
-      strengths: [...new Set(strengths)].slice(0, 3),
-      weakAreas: [...new Set(weakAreas)].slice(0, 3),
+      strengths: [...new Set(strengths)].slice(0, 4),
+      weakAreas: [...new Set(weakAreas)].slice(0, 4),
       overallScore,
-      suggestions: [...new Set(suggestions)].slice(0, 3),
+      suggestions: [...new Set(suggestions)].slice(0, 4),
     };
   }, [session]);
 

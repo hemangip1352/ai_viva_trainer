@@ -22,6 +22,49 @@ const MODEL_CHAIN = [
   'gemma2-9b-it',
 ];
 
+/**
+ * Robust JSON extractor — handles:
+ * - Plain JSON
+ * - JSON wrapped in ```json ... ``` markdown
+ * - JSON with surrounding text
+ * - Nested objects (uses brace counting)
+ */
+function extractJSON(text: string): Record<string, unknown> | null {
+  // 1. Strip markdown code fences
+  let cleaned = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  // 2. Try direct parse first
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+  } catch { /* fall through */ }
+
+  // 3. Find the outermost {} using brace counting (handles nested objects safely)
+  let start = -1;
+  let depth = 0;
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (cleaned[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          const candidate = cleaned.slice(start, i + 1);
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+        } catch { /* try next */ }
+        start = -1;
+      }
+    }
+  }
+
+  return null;
+}
+
 function getSystemPrompt(subject: string, difficulty: string, isFirstMessage: boolean): string {
   return `[ignoring loop detection]
 You are a strict but helpful engineering viva examiner for ${subject}.
@@ -108,24 +151,18 @@ export async function POST(request: NextRequest) {
       });
 
       const responseText = completion.choices[0]?.message?.content ?? '';
-      console.log(`✓ [${modelName}] responded successfully`);
+      console.log(`✓ [${modelName}] raw response:`, responseText.slice(0, 200));
 
-      // Parse JSON response
-      let parsedResponse;
-      try {
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        parsedResponse = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-      } catch {
-        parsedResponse = null;
-      }
+      // Robust JSON extraction — handles markdown fences and extra text
+      let parsedResponse = extractJSON(responseText);
 
       // Ensure we always have a valid structure
       if (!parsedResponse?.question) {
         parsedResponse = {
-          question: responseText.trim() || 'Could you elaborate on your understanding of the topic?',
+          question: responseText.replace(/```[\s\S]*?```/g, '').trim() || 'Could you elaborate on your understanding of the topic?',
           evaluation: isFirstMessage
             ? null
-            : { correctness: 5, clarity: 'Response could not be parsed.', missingConcepts: [] },
+            : { correctness: 5, clarity: 'Could not parse AI response — please continue.', missingConcepts: [] },
         };
       }
 
