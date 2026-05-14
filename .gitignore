@@ -1,0 +1,12 @@
+# Build artifacts
+.vercel/
+
+# Environment variables
+.env
+.env.local
+
+# Common ignores
+node_modules
+.next/
+.DS_Store
+.vercel
